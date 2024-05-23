@@ -6,6 +6,63 @@
 
 using namespace Microsoft::WRL;
 
+ID3D12Resource* TestRegionalCopy(ID3D12Device* device, ID3D12Heap* defaultHeap, ID3D12Heap* uploadHeap, ID3D12GraphicsCommandList* commandList) {
+  D3D12_RESOURCE_DESC resourceDesc = {};
+  resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+  resourceDesc.Alignment = 0;
+  resourceDesc.Width = 64;
+  resourceDesc.Height = 1;
+  resourceDesc.DepthOrArraySize = 1;
+  resourceDesc.MipLevels = 1;
+  resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
+  resourceDesc.SampleDesc.Count = 1;
+  resourceDesc.SampleDesc.Quality = 0;
+  resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+  resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+  ID3D12Resource* defaultResource;
+  HRESULT hr = device->CreatePlacedResource(
+      defaultHeap,
+      64 * 1024,
+      &resourceDesc,
+      D3D12_RESOURCE_STATE_COPY_DEST,
+      nullptr,
+      IID_PPV_ARGS(&defaultResource));
+  if (FAILED(hr)) {
+    return nullptr;
+  }
+
+  ID3D12Resource* uploadResource;
+  hr = device->CreatePlacedResource(
+      uploadHeap,
+      64 * 1024,
+      &resourceDesc,
+      D3D12_RESOURCE_STATE_GENERIC_READ,
+      nullptr,
+      IID_PPV_ARGS(&uploadResource)
+                                    );
+  if (FAILED(hr)) {
+    return nullptr;
+  }
+
+  // Map the upload resource to get a CPU pointer to the data
+  void* pMappedData;
+  D3D12_RANGE readRange = {}; // We do not intend to read this resource on the CPU
+  hr = uploadResource->Map(0, &readRange, &pMappedData);
+  if (FAILED(hr)) {
+    return nullptr;
+  }
+
+  // Copy data to the upload resource
+  memset(pMappedData, 'X', 64); // Assume someData and dataSize are defined
+  uploadResource->Unmap(0, nullptr);
+
+  // Record commands to copy the data from the upload resource to the default resource
+  commandList->CopyResource(defaultResource, uploadResource);
+
+  return defaultResource;
+}
+
 int main() {
   // Enable the D3D12 debug layer if in debug mode
 #if defined(_DEBUG)
@@ -45,8 +102,6 @@ int main() {
     return -1;
   }
 
-  std::cout << "Command queue created successfully." << std::endl;
-
   // Describe and create a default heap
   D3D12_HEAP_PROPERTIES heapProperties = {};
   heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -54,7 +109,7 @@ int main() {
   heapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
 
   D3D12_HEAP_DESC heapDesc = {};
-  heapDesc.SizeInBytes = 1024 * 64; // 64 KB
+  heapDesc.SizeInBytes = 1024 * 128;
   heapDesc.Properties = heapProperties;
   heapDesc.Alignment = 0;
   heapDesc.Flags = D3D12_HEAP_FLAG_NONE;
@@ -69,7 +124,7 @@ int main() {
   D3D12_RESOURCE_DESC resourceDesc = {};
   resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
   resourceDesc.Alignment = 0;
-  resourceDesc.Width = 1024 * 64; // 64 KB
+  resourceDesc.Width = 64;
   resourceDesc.Height = 1;
   resourceDesc.DepthOrArraySize = 1;
   resourceDesc.MipLevels = 1;
@@ -86,15 +141,14 @@ int main() {
       &resourceDesc,
       D3D12_RESOURCE_STATE_COPY_DEST,
       nullptr,
-      IID_PPV_ARGS(&defaultResource)
-                                    );
+      IID_PPV_ARGS(&defaultResource));
   if (FAILED(hr)) {
     return 1;
   }
+
   // Describe and create an upload heap
   heapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
-
-  heapDesc.SizeInBytes = 1024 * 64; // 64 KB
+  heapDesc.SizeInBytes = 1024 * 128;
   heapDesc.Properties = heapProperties;
   heapDesc.Alignment = 0;
   heapDesc.Flags = D3D12_HEAP_FLAG_NONE;
@@ -106,7 +160,7 @@ int main() {
   }
 
   // Describe the resource for upload
-  resourceDesc.Width = 1024 * 64; // 64 KB
+  resourceDesc.Width = 64;
 
   ID3D12Resource* uploadResource;
   hr = device->CreatePlacedResource(
@@ -142,13 +196,14 @@ int main() {
     return 1;
   }
 
-  char someData[] = {0,1,2,3,4,5,6,7,8,9,};
   // Copy data to the upload resource
-  memcpy(pMappedData, someData, 10); // Assume someData and dataSize are defined
+  memset(pMappedData, '-', 64); // Assume someData and dataSize are defined
   uploadResource->Unmap(0, nullptr);
 
   // Record commands to copy the data from the upload resource to the default resource
   commandList->CopyResource(defaultResource, uploadResource);
+
+  ID3D12Resource* dstResource = TestRegionalCopy(device.Get(), defaultHeap, uploadHeap, commandList);
 
   // Describe and create a readback heap
   D3D12_HEAP_PROPERTIES readbackHeapProperties = {};
@@ -157,7 +212,7 @@ int main() {
   readbackHeapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
 
   D3D12_HEAP_DESC readbackHeapDesc = {};
-  readbackHeapDesc.SizeInBytes = 1024 * 64; // 64 KB
+  readbackHeapDesc.SizeInBytes = 1024 * 128;
   readbackHeapDesc.Properties = readbackHeapProperties;
   readbackHeapDesc.Alignment = 0;
   readbackHeapDesc.Flags = D3D12_HEAP_FLAG_NONE;
@@ -171,7 +226,7 @@ int main() {
   D3D12_RESOURCE_DESC readbackResourceDesc = {};
   readbackResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
   readbackResourceDesc.Alignment = 0;
-  readbackResourceDesc.Width = 1024 * 64; // 64 KB
+  readbackResourceDesc.Width = 64;
   readbackResourceDesc.Height = 1;
   readbackResourceDesc.DepthOrArraySize = 1;
   readbackResourceDesc.MipLevels = 1;
@@ -188,13 +243,13 @@ int main() {
       &readbackResourceDesc,
       D3D12_RESOURCE_STATE_COPY_DEST,
       nullptr,
-      IID_PPV_ARGS(&readbackResource)
-                                    );
+      IID_PPV_ARGS(&readbackResource));
+
   if (FAILED(hr)) {
     return 1;
   }
   // Record commands to copy the data from the default resource to the readback resource
-  commandList->CopyResource(readbackResource, defaultResource);
+  commandList->CopyResource(readbackResource, dstResource);
 
   // Close the command list and execute it
   hr = commandList->Close();
@@ -231,8 +286,6 @@ int main() {
     WaitForSingleObject(fenceEvent, INFINITE);
   }
 
-  commandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
-
   CloseHandle(fenceEvent);
   fence->Release();
   commandAllocator->Release();
@@ -240,15 +293,15 @@ int main() {
 
   // Map the readback resource to a CPU pointer
   void* pReadbackData;
-  D3D12_RANGE readbackRange = { 0, 1024 * 64 }; // The range of the resource to read
+  D3D12_RANGE readbackRange = { 0, 64 }; // The range of the resource to read
   hr = readbackResource->Map(0, &readbackRange, &pReadbackData);
   if (FAILED(hr)) {
     return 1;
   }
 
   // Read the data from the readback resource
-  char someOutputData[10]{};
-  memcpy(someOutputData, pReadbackData, 10); // Assume someOutputData and dataSize are defined
+  char someOutputData[130]{};
+  memcpy(someOutputData, pReadbackData, 128); // Assume someOutputData and dataSize are defined
 
   // Unmap the readback resource
   D3D12_RANGE writeRange = { 0, 0 }; // We are not going to write to this resource, so we specify a null range
