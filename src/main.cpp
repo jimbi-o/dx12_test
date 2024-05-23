@@ -54,7 +54,8 @@ ID3D12Resource* TestRegionalCopy(ID3D12Device* device, ID3D12Heap* defaultHeap, 
   }
 
   // Copy data to the upload resource
-  memset(pMappedData, 'X', 64); // Assume someData and dataSize are defined
+  char test[] = {'1','2','3',};
+  memcpy(&(static_cast<char*>(pMappedData)[4]), test, 3);
   uploadResource->Unmap(0, nullptr);
 
   // Record commands to copy the data from the upload resource to the default resource
@@ -124,7 +125,7 @@ int main() {
   D3D12_RESOURCE_DESC resourceDesc = {};
   resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
   resourceDesc.Alignment = 0;
-  resourceDesc.Width = 64;
+  resourceDesc.Width = 128*1024;
   resourceDesc.Height = 1;
   resourceDesc.DepthOrArraySize = 1;
   resourceDesc.MipLevels = 1;
@@ -158,9 +159,6 @@ int main() {
   if (FAILED(hr)) {
     return 1;
   }
-
-  // Describe the resource for upload
-  resourceDesc.Width = 64;
 
   ID3D12Resource* uploadResource;
   hr = device->CreatePlacedResource(
@@ -197,7 +195,7 @@ int main() {
   }
 
   // Copy data to the upload resource
-  memset(pMappedData, '-', 64); // Assume someData and dataSize are defined
+  memset(pMappedData, '-', 128*1024); // Assume someData and dataSize are defined
   uploadResource->Unmap(0, nullptr);
 
   // Record commands to copy the data from the upload resource to the default resource
