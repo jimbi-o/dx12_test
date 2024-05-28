@@ -6,64 +6,6 @@
 
 using namespace Microsoft::WRL;
 
-ID3D12Resource* TestRegionalCopy(ID3D12Device* device, ID3D12Heap* defaultHeap, ID3D12Heap* uploadHeap, ID3D12GraphicsCommandList* commandList) {
-  D3D12_RESOURCE_DESC resourceDesc = {};
-  resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-  resourceDesc.Alignment = 0;
-  resourceDesc.Width = 64;
-  resourceDesc.Height = 1;
-  resourceDesc.DepthOrArraySize = 1;
-  resourceDesc.MipLevels = 1;
-  resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
-  resourceDesc.SampleDesc.Count = 1;
-  resourceDesc.SampleDesc.Quality = 0;
-  resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-  resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-
-  ID3D12Resource* defaultResource;
-  HRESULT hr = device->CreatePlacedResource(
-      defaultHeap,
-      64 * 1024,
-      &resourceDesc,
-      D3D12_RESOURCE_STATE_COPY_DEST,
-      nullptr,
-      IID_PPV_ARGS(&defaultResource));
-  if (FAILED(hr)) {
-    return nullptr;
-  }
-
-  ID3D12Resource* uploadResource;
-  hr = device->CreatePlacedResource(
-      uploadHeap,
-      64 * 1024,
-      &resourceDesc,
-      D3D12_RESOURCE_STATE_GENERIC_READ,
-      nullptr,
-      IID_PPV_ARGS(&uploadResource)
-                                    );
-  if (FAILED(hr)) {
-    return nullptr;
-  }
-
-  // Map the upload resource to get a CPU pointer to the data
-  void* pMappedData;
-  D3D12_RANGE readRange = {}; // We do not intend to read this resource on the CPU
-  hr = uploadResource->Map(0, &readRange, &pMappedData);
-  if (FAILED(hr)) {
-    return nullptr;
-  }
-
-  // Copy data to the upload resource
-  char test[] = {'1','2','3',};
-  memcpy(&(static_cast<char*>(pMappedData)[4]), test, 3);
-  uploadResource->Unmap(0, nullptr);
-
-  // Record commands to copy the data from the upload resource to the default resource
-  commandList->CopyResource(defaultResource, uploadResource);
-
-  return defaultResource;
-}
-
 int main() {
   // Enable the D3D12 debug layer if in debug mode
 #if defined(_DEBUG)
@@ -140,68 +82,24 @@ int main() {
       defaultHeap,
       0,
       &resourceDesc,
-      D3D12_RESOURCE_STATE_COPY_DEST,
+      D3D12_RESOURCE_STATE_GENERIC_READ,
       nullptr,
       IID_PPV_ARGS(&defaultResource));
   if (FAILED(hr)) {
     return 1;
   }
 
-  // Describe and create an upload heap
-  heapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
-  heapDesc.SizeInBytes = (512U+128) * 1024U * 1024U;
-  heapDesc.Properties = heapProperties;
-  heapDesc.Alignment = 0;
-  heapDesc.Flags = D3D12_HEAP_FLAG_NONE;
-
-  ID3D12Heap* uploadHeap;
-  hr = device->CreateHeap(&heapDesc, IID_PPV_ARGS(&uploadHeap));
-  if (FAILED(hr)) {
-    return 1;
-  }
-
-  ID3D12Resource* uploadResource;
-  hr = device->CreatePlacedResource(
-      uploadHeap,
-      0,
-      &resourceDesc,
-      D3D12_RESOURCE_STATE_GENERIC_READ,
-      nullptr,
-      IID_PPV_ARGS(&uploadResource)
-                                    );
-  if (FAILED(hr)) {
-    return 1;
-  }
-  // Create a command allocator and command list
-  ID3D12CommandAllocator* commandAllocator;
-  ID3D12GraphicsCommandList* commandList;
-
-  hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator));
-  if (FAILED(hr)) {
-    return 1;
-  }
-
-  hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator, nullptr, IID_PPV_ARGS(&commandList));
-  if (FAILED(hr)) {
-    return 1;
-  }
-
-  // Map the upload resource to get a CPU pointer to the data
   void* pMappedData;
   D3D12_RANGE readRange = {}; // We do not intend to read this resource on the CPU
-  hr = uploadResource->Map(0, &readRange, &pMappedData);
+  hr = defaultResource->Map(0, &readRange, &pMappedData);
   if (FAILED(hr)) {
+    std::cout << "default map failure" << std::endl;
     return 1;
   }
 
   // Copy data to the upload resource
   memset(pMappedData, '-', 128*1024); // Assume someData and dataSize are defined
-  uploadResource->Unmap(0, nullptr);
-
-  // Record commands to copy the data from the upload resource to the default resource
-  commandList->CopyResource(defaultResource, uploadResource);
-
-  ID3D12Resource* dstResource = TestRegionalCopy(device.Get(), defaultHeap, uploadHeap, commandList);
+  defaultResource->Unmap(0, nullptr);
 
   // Describe and create a readback heap
   D3D12_HEAP_PROPERTIES readbackHeapProperties = {};
@@ -246,8 +144,21 @@ int main() {
   if (FAILED(hr)) {
     return 1;
   }
+  // Create a command allocator and command list
+  ID3D12CommandAllocator* commandAllocator;
+  ID3D12GraphicsCommandList* commandList;
+
+  hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator));
+  if (FAILED(hr)) {
+    return 1;
+  }
+
+  hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator, nullptr, IID_PPV_ARGS(&commandList));
+  if (FAILED(hr)) {
+    return 1;
+  }
   // Record commands to copy the data from the default resource to the readback resource
-  commandList->CopyResource(readbackResource, dstResource);
+  commandList->CopyResource(readbackResource, defaultResource);
 
   // Close the command list and execute it
   hr = commandList->Close();
